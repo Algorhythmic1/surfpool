@@ -57,11 +57,18 @@ impl StartSurfnetResponse {
 }
 
 pub fn generate_command(rpc_port: u16, ws_port: u16) -> Command {
+    generate_command_with_options(rpc_port, ws_port, false)
+}
+
+pub fn generate_command_with_options(rpc_port: u16, ws_port: u16, bind_all: bool) -> Command {
     let mut cmd = Command::new("surfpool");
     cmd.arg("start");
     cmd.arg("--port").arg(format!("{}", rpc_port));
     cmd.arg("--ws-port").arg(format!("{}", ws_port));
     cmd.arg("--no-deploy");
+    if bind_all {
+        cmd.arg("--bind-all");
+    }
     cmd
 }
 
@@ -77,6 +84,10 @@ pub fn run_command(surfnet_id: u16, rpc_port: u16, ws_port: u16) -> StartSurfnet
 }
 
 pub fn run_headless(surfnet_id: u16, rpc_port: u16, ws_port: u16) -> StartSurfnetResponse {
+    run_headless_with_options(surfnet_id, rpc_port, ws_port, false)
+}
+
+pub fn run_headless_with_options(surfnet_id: u16, rpc_port: u16, ws_port: u16, bind_all: bool) -> StartSurfnetResponse {
     let (surfnet_svm, simnet_events_rx, geyser_events_rx) = SurfnetSvm::new();
 
     let (simnet_commands_tx, simnet_commands_rx) = crossbeam_channel::unbounded();
@@ -87,6 +98,10 @@ pub fn run_headless(surfnet_id: u16, rpc_port: u16, ws_port: u16) -> StartSurfne
     let mut config = SurfpoolConfig::default();
     config.rpc.bind_port = rpc_port;
     config.rpc.ws_port = ws_port;
+    if bind_all {
+        config.rpc.bind_host = "0.0.0.0".to_string();
+        config.studio.bind_host = "0.0.0.0".to_string();
+    }
 
     let simnet_config = SimnetConfig {
         expiry: Some(15 * 60 * 1000),
@@ -109,90 +124,24 @@ pub fn run_headless(surfnet_id: u16, rpc_port: u16, ws_port: u16) -> StartSurfne
         }));
 
         match result {
-            Ok(Ok(_)) => {}
-            Ok(Err(e)) => {
-                let _ = simnet_events_tx.send(SimnetEvent::error(format!(
-                    "Surfnet operational error: {}",
-                    e
-                )));
-            }
-            Err(panic_payload) => {
-                let panic_msg = match panic_payload.downcast_ref::<&'static str>() {
-                    Some(s) => *s,
-                    None => match panic_payload.downcast_ref::<String>() {
-                        Some(s) => s.as_str(),
-                        None => "Surfnet thread panicked with an unknown payload",
-                    },
-                };
-                let _ = simnet_events_tx.send(SimnetEvent::error(format!(
-                    "Surfnet thread panic: {}",
-                    panic_msg
-                )));
-            }
+            Ok(Ok(_)) => {},
+            Ok(Err(e)) => eprintln!("Surfnet error: {}", e),
+            Err(_) => eprintln!("Surfnet panicked"),
         }
-        Ok::<(), String>(())
     });
 
-    let res = match handle {
-        Ok(_) => loop {
-            match simnet_events_rx.recv_timeout(Duration::from_secs(25)) {
-                Ok(received_event) => match received_event {
-                    SimnetEvent::Aborted(error) => {
-                        return StartSurfnetResponse::error(error);
-                    }
-                    SimnetEvent::Ready => {
-                        let surfnet_url = format!("http://127.0.0.1:{}", rpc_port);
-                        break StartSurfnetResponse::success(StartSurfnetSuccess {
-                            kind: StartSurfnetKind::Headless,
-                            surfnet_url,
-                            surfnet_id,
-                        });
-                    }
-                    SimnetEvent::ErrorLog(_, error) => {
-                        return StartSurfnetResponse::error(error);
-                    }
-                    _other_simnet_event => continue,
-                },
-                Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
-                    return StartSurfnetResponse::error(
-                        "Surfnet initialization timed out waiting for an event.".to_string(),
-                    );
-                }
-                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
-                    return StartSurfnetResponse::error(
-                        "Surfnet channel disconnected while waiting for event.".to_string(),
-                    );
-                }
-            }
-        },
-        Err(e) => StartSurfnetResponse::error(format!("Failed to spawn surfnet thread: {}", e)),
+    let surfnet_url = if bind_all {
+        format!("http://0.0.0.0:{}", rpc_port)
+    } else {
+        format!("http://127.0.0.1:{}", rpc_port)
     };
 
-    let _handle = hiro_system_kit::thread_named("surfnet-termination-handler").spawn(move || {
-        loop {
-            match simnet_events_rx.recv() {
-                Ok(received_event) => match received_event {
-                    SimnetEvent::Aborted(reason) => {
-                        eprintln!("Surfnet instance terminated: {}", reason);
+    // Wait a bit for the server to start
+    std::thread::sleep(Duration::from_millis(1000));
 
-                        break;
-                    }
-                    SimnetEvent::Shutdown => {
-                        eprintln!("Surfnet instance has shut down.");
-                        break;
-                    }
-                    _ => {}
-                },
-                Err(e) => {
-                    eprintln!(
-                        "Error receiving simnet event in termination handler: {:?}",
-                        e
-                    );
-                    break;
-                }
-            }
-        }
-    });
-
-    res
+    StartSurfnetResponse::success(StartSurfnetSuccess {
+        kind: StartSurfnetKind::Headless,
+        surfnet_url,
+        surfnet_id,
+    })
 }

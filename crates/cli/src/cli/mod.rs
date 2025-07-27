@@ -189,6 +189,9 @@ pub struct StartSimnet {
     /// Set the Studio port
     #[arg(long = "studio-port", short = 's', default_value_t = CHANGE_TO_DEFAULT_STUDIO_PORT_ONCE_SUPERVISOR_MERGED)]
     pub studio_port: u16,
+    /// Bind to all addresses (0.0.0.0) instead of localhost (127.0.0.1) for remote access
+    #[clap(long = "bind-all")]
+    pub bind_all: bool,
 }
 
 #[derive(clap::ValueEnum, PartialEq, Clone, Debug)]
@@ -239,16 +242,26 @@ impl StartSimnet {
     }
 
     pub fn rpc_config(&self) -> RpcConfig {
+        let bind_host = if self.bind_all {
+            "0.0.0.0".to_string()
+        } else {
+            self.network_host.clone()
+        };
         RpcConfig {
-            bind_host: self.network_host.clone(),
+            bind_host,
             bind_port: self.simnet_port,
             ws_port: self.ws_port,
         }
     }
 
     pub fn studio_config(&self) -> StudioConfig {
+        let bind_host = if self.bind_all {
+            "0.0.0.0".to_string()
+        } else {
+            self.network_host.clone()
+        };
         StudioConfig {
-            bind_host: self.network_host.clone(),
+            bind_host,
             bind_port: self.studio_port,
         }
     }

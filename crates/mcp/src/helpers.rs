@@ -3,7 +3,15 @@ use std::net::TcpListener;
 use solana_sdk::rpc_port::DEFAULT_RPC_PORT;
 
 pub fn is_port_available(port: u16) -> bool {
-    TcpListener::bind(("127.0.0.1", port)).is_ok()
+    is_port_available_on_host("127.0.0.1", port)
+}
+
+pub fn is_port_available_on_host(host: &str, port: u16) -> bool {
+    TcpListener::bind((host, port)).is_ok()
+}
+
+pub fn is_port_available_for_all_addresses(port: u16) -> bool {
+    TcpListener::bind(("0.0.0.0", port)).is_ok()
 }
 
 pub fn find_next_available_surfnet_port() -> Result<(u16, u16), String> {
